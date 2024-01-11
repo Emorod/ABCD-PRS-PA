@@ -1,0 +1,112 @@
+#-------Directories and variable creation:
+
+mkdir /root/Youth_GEMS/ABCD/PRS/C+T/SCZ_PGC3_EUR
+dir=/root/Youth_GEMS/ABCD/PRS/C+T/SCZ_PGC3_EUR
+sample=ABCD
+ExperimentName=SCZ_PGC3_EUR
+imp=all_1kg
+
+mkdir ${dir}/base
+mkdir ${dir}/target
+mkdir ${dir}/base/${imp}
+mkdir ${dir}/target/${imp}
+target=/root/Youth_GEMS/ABCD/geno/ABCD_genotype/ABCD_imputation/imputed/Hardcall/hardcall_rs_hwe_goodsample/ABCD_hardcall_rs_hwe_goodsample
+
+#-------Extract the 1Kgenomes SNPs (build 38):
+
+awk '{print $2}' 1kg_38.bim > 1kg_rs.SNP
+
+#Define reference and base data
+
+Ref=/root/Youth_GEMS/Public_data/1kg/1kg_build38/1kg_rs.SNP
+sums=/root/Youth_GEMS/Public_data/GWAS/SCZ/PGC3_EUR/PGC3_SCZ_EUR_QC.txt
+head $sums
+
+#-------Extract the SNP A1 A2 Beta and P-value columns from the summary statistics:
+
+awk '{print $2, $4, $5, $9, $11}' $sums | sed '1d' > ${sums}_covert
+printf 'SNP A1 A2 Beta P\n' > $dir/base/${imp}/${ExperimentName}_clean_matchref
+
+#-------Find overlapped SNPs between reference and base data:
+
+awk 'NR == FNR{c[$1]++;next};c[$1] > 0'   $Ref ${sums}_covert >> $dir/base/${imp}/${ExperimentName}_clean_matchref
+awk '{print $1}' $dir/base/${imp}/${ExperimentName}_clean_matchref >  $dir/base/${imp}/${ExperimentName}_SNP
+
+#-----------Target: Remove complex-long LD regions.
+
+ComplexLDfile=/root/Youth_GEMS/Public_data/Complex_LD/complex_ld_structures38.txt
+
+plink2 --bfile ${target} --exclude range ${ComplexLDfile} --make-bed  --out ${dir}/target/${imp}/${sample}_ldregion
+
+#-----------Extract overlapped SNPs from the non LD regions Target Data:
+base=$dir/base/${imp}/${ExperimentName}_clean_matchref
+plink2 --bfile ${dir}/target/${imp}/${sample}_ldregion --extract $dir/base/${imp}/${ExperimentName}_SNP --make-bed --out ${dir}/target/${imp}/${ExperimentName}
+awk '{print $2}' ${dir}/target/${imp}/${ExperimentName}.bim > ${dir}/target/${imp}/${ExperimentName}_SNP
+
+#-----------Prepare file with summary statistics with overlapped SNPs (Base + Reference Data):
+printf 'SNP A1 A2 Beta P\n' > $dir/base/${imp}/${ExperimentName}_clean_matchref_final
+awk 'NR == FNR{c[$1]++;next};c[$1] > 0' $dir/target/${imp}/${ExperimentName}_SNP $dir/base/${imp}/${ExperimentName}_clean_matchref >> $dir/base/${imp}/${ExperimentName}_clean_matchref_final
+
+#-------------------------------CLUMPING
+#------------make base datasets:
+
+echo "##########CLUMP ROUND 1 ##########"  
+plink1.9  --bfile  $dir/target/${imp}/${ExperimentName} \
+--clump $dir/base/${imp}/${ExperimentName}_clean_matchref_final \
+	--clump-p1 1 \
+	--clump-p2 1 \
+	--clump-kb 250 \
+	--clump-r2 0.5 \
+	--clump-snp-field SNP \
+	--clump-field P \
+	--out ${dir}/target/${imp}/${ExperimentName}_clumped_round1_1_1_250_05
+
+#Extract clumping SNPs for round 2:
+awk '{print $3}' ${dir}/target/${imp}/${ExperimentName}_clumped_round1_1_1_250_05.clumped > ${dir}/target/${imp}/${ExperimentName}_clumped_round1
+
+awk 'NR == FNR{c[$1]++;next};c[$1] > 0'  ${dir}/target/${imp}/${ExperimentName}_clumped_round1  $dir/base/${imp}/${ExperimentName}_clean_matchref >  $dir/base/${imp}/${ExperimentName}_clean_matchref_r1
+
+echo "##########CLUMP ROUND 2 ##########"
+plink1.9 --bfile  $dir/target/${imp}/${ExperimentName} \
+	--extract ${dir}/target/${imp}/${ExperimentName}_clumped_round1 \
+	--clump $dir/base/${imp}/${ExperimentName}_clean_matchref_r1 \
+	--clump-p1 1 \
+	--clump-p2 1 \
+	--clump-kb 5000 \
+	--clump-r2 0.2 \
+	--out ${dir}/target/${imp}/${ExperimentName}_clumped_round2_1_1_5000_02
+
+awk '{print $3}' ${dir}/target/${imp}/${ExperimentName}_clumped_round2_1_1_5000_02.clumped > ${dir}/target/${imp}/${ExperimentName}_clumped_round2
+
+awk 'NR == FNR{c[$1]++;next};c[$1] > 0'  ${dir}/target/${imp}/${ExperimentName}_clumped_round2  $dir/base/${imp}/${ExperimentName}_clean_matchref >  $dir/base/${imp}/${ExperimentName}_clean_matchref_r2
+
+plink2 \
+	--bfile $dir/target/${imp}/${ExperimentName} \
+        --extract ${dir}/target/${imp}/${ExperimentName}_clumped_round2 \
+	--make-bed \
+	--out ${dir}/target/${imp}/${ExperimentName}_final 
+
+echo "##########calucate PRS Using PRSice ##########"
+
+cd /root/Youth_GEMS/ABCD/PRS/PRSice
+
+out=/root/Youth_GEMS/ABCD/PRS/PRSice/${imp}
+mkdir ${out}
+
+Rscript PRSice.R --dir .\
+    --prsice PRSice_linux \
+    --base $dir/base/${imp}/${ExperimentName}_clean_matchref_r2 \
+    --target ${dir}/target/${imp}/${ExperimentName}_final \
+    --stat Beta \
+    --A1 A1 \
+    --A2 A2 \
+    --bar-levels 5e-8,5e-7,5e-6,5e-5,5e-4,5e-3,5e-2,0.1,0.2,0.3,0.4,0.5 \
+    --no-clump \
+    --missing MEAN_IMPUTE \
+    --model add \
+    --fastscore \
+    --pvalue P \
+    --score sum \
+    --no-regress \
+    --binary-target T \
+    --out ${out}/${ExperimentName}
