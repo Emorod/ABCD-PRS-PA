@@ -2,7 +2,7 @@
 
 This GitHub repository includes code and data for the following tasks:
 
-Code for Quality Control, Principal Component Analysis, and Polygenic Risk Score is available upon request
+`Code for Quality Control`, `Principal Component Analysis`, and `Polygenic Risk Score` is available upon request
 
 1. **PRS PA Analysis**
    - `PRS_PA_Analysis.R`: R script for interaction plots.
